@@ -1,7 +1,13 @@
 # DataEngineeringProject
+
 1 Master node:
-master 192.168.2.176\n
+
+master 192.168.2.176
+
 3 Worker nodes:
-worker1 192.168.2.234\n
-worker2 192.168.2.82\n
-worker3 192.168.2.163\n
+
+worker1 192.168.2.234
+
+worker2 192.168.2.82
+
+worker3 192.168.2.163
