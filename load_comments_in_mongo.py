@@ -1,6 +1,26 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import sys
+
+# In[1]:
+
+
+try:
+    no_of_records = str(sys.argv[1])
+    cores_per_executor = int(sys.argv[2])
+    memory = str(int(sys.argv[3]))
+    instances = int(sys.argv[4])
+except:
+    sys.exit(1)
+
+
+# In[ ]:
+
+
+
+
+
 # In[1]:
 
 
@@ -21,7 +41,7 @@ import pandas as pd
 from nltk.sentiment.vader import SentimentIntensityAnalyzer as SIA
 
 
-# In[2]:
+# In[3]:
 
 
 import pprint
@@ -30,22 +50,26 @@ from operator import add
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
+app_string = "R = " + str(no_of_records) + ", C/E = " + str(cores_per_executor) + ", M/E = "  \
+ + str(memory) + ", E = " + str(instances)
+
 # New API
-spark_session = SparkSession    .builder    .appName("test_notebook")    .master("spark://192.168.2.176:7077")    .config("spark.dynamicAllocation.enabled", True)    .config("spark.dynamicAllocation.shuffleTracking.enabled", True)    .config("spark.shuffle.service.enabled", False)    .config("spark.dynamicAllocation.executorIdleTimeout","100s")    .config("spark.driver.port",9998)    .config("spark.blockManager.port",10005)    .getOrCreate()
+spark_session = SparkSession    .builder    .appName(app_string)    .master("spark://host-192-168-2-176-de1:7077")    .config("spark.dynamicAllocation.enabled", True)    .config("spark.dynamicAllocation.shuffleTracking.enabled", True)    .config("spark.shuffle.service.enabled", False)    .config("spark.dynamicAllocation.executorIdleTimeout","100s")    .config("spark.driver.port",9998)    .config("spark.blockManager.port",10005)    .config("spark.cores.max", 10)    .config("spark.executor.cores",cores_per_executor)    .config("spark.executor.instances", instances)  .config("spark.ui.showConsoleProgress", False)  .config("spark.executor.memory", memory + "g")    .getOrCreate()
 
 # Old API (RDD)
 spark_context = spark_session.sparkContext
 
 spark_context.setLogLevel("ERROR")
 
+print()
+print('------------------------------------------------------------')
+print('No of records = ' + str(no_of_records) + 'k')
+print('Cores per executor = ' + str(cores_per_executor))
+print('Memory of executor = ' + str(memory))
+print('Total executors = ' + str(instances))
 
-# In[3]:
 
-
-print(spark_context.uiWebUrl)
-
-
-# In[4]:
+# In[5]:
 
 
 schema = StructType([
@@ -54,25 +78,19 @@ schema = StructType([
 )
 
 
-# In[5]:
-
-
-df = spark_session.read.schema(schema).json("hdfs://host-192-168-2-176-de1:9000/comments/RC_2011-07")
-
-
-# In[6]:
-
-
-df = df.limit(100000)
-
-
 # In[7]:
+
+
+df = spark_session.read.schema(schema)    .json("hdfs://host-192-168-2-176-de1:9000/comments/" + no_of_records + "k_elements.json")
+
+
+# In[11]:
 
 
 categories = df.select('subreddit').distinct().collect()
 
 
-# In[8]:
+# In[13]:
 
 
 i = 0
@@ -86,7 +104,7 @@ for c in categories:
     i += 1
 
 
-# In[9]:
+# In[14]:
 
 
 def transform_to_id(cat):
@@ -95,66 +113,60 @@ def transform_to_id(cat):
 transform_to_id_udf = udf(transform_to_id)
 
 
-# In[10]:
+# In[15]:
 
 
-df = df.withColumn("cat_id",transform_to_id_udf(df["subreddit"]).cast("int"))
+df2 = df.withColumn("cat_id",transform_to_id_udf(df["subreddit"]).cast("int"))
 
 
-# In[11]:
+# In[16]:
 
 
-most_popular_categories = df.groupBy('cat_id').count().sort('count', ascending=False).head(50)
+most_popular_categories = df2.groupBy('subreddit').count().sort('count', ascending=False).take(50)
 
 
-# In[12]:
+# In[17]:
 
 
 categories_to_keep = []
 
 for r in most_popular_categories:
     
-    categories_to_keep.append(r['cat_id'])
+    categories_to_keep.append(cat_to_id[r['subreddit']])
 
 
-# In[13]:
+# In[19]:
 
 
-rdd = df.rdd.map(list)
+rdd = df2.rdd
 
 
-# In[14]:
+# In[22]:
 
 
 filtered_rdd = rdd.filter(lambda x: x[2] in categories_to_keep)
 
 
-# In[15]:
+# In[23]:
 
 
-filtered_rdd.count()
+filtered_rdd1 = filtered_rdd.map(lambda x: (x[0], emoji.get_emoji_regexp().sub(u'', x[1])))
 
 
-# In[16]:
-
-
-filtered_rdd1 = filtered_rdd.map(lambda x: (x[2], emoji.get_emoji_regexp().sub(u'', x[1])))
-
-
-# In[17]:
+# In[24]:
 
 
 tokenizer = RegexpTokenizer('\w+|\$[\d\.]+|http\S+')
 filtered_rdd2 = filtered_rdd1.map(lambda x: (x[0], tokenizer.tokenize(x[1])))
 
 
-# In[18]:
+# In[25]:
 
 
 filtered_rdd3 = filtered_rdd2.map(lambda x: (x[0], [word.lower() for word in x[1]]))
 
 
-# In[19]:
+# In[26]:
 
 
 nlp = en_core_web_sm.load()
@@ -164,28 +176,28 @@ all_stopwords = nlp.Defaults.stop_words
 filtered_rdd4 = filtered_rdd3.map(lambda x: (x[0], [word for word in x[1] if not word in all_stopwords]))
 
 
-# In[20]:
+# In[27]:
 
 
-nltk.download('wordnet')
-nltk.download('omw-1.4')
+# nltk.download('wordnet')
+# nltk.download('omw-1.4')
 
 lemmatizer = WordNetLemmatizer()
 
 filtered_rdd5 = filtered_rdd4.map(lambda x: (x[0], ([lemmatizer.lemmatize(w) for w in x[1]])))
 
 
-# In[21]:
+# In[28]:
 
 
-nltk.download('vader_lexicon')
+# nltk.download('vader_lexicon')
 
 sia = SIA()
 
 filtered_rdd6 = filtered_rdd5.map(lambda x: (x[0], [sia.polarity_scores(word)['compound'] for word in x[1]]))
 
 
-# In[22]:
+# In[29]:
 
 
 def find_positive_negative(scores):
@@ -203,64 +215,58 @@ def find_positive_negative(scores):
 find_positive_negative_udf = udf(find_positive_negative)
 
 
-# In[23]:
+# In[30]:
 
 
 filtered_rdd7 = filtered_rdd6.map(lambda x: (x[0], find_positive_negative(x[1])))
 
 
-# In[24]:
+# In[32]:
 
 
 final_rdd = filtered_rdd7.reduceByKey(lambda x, y: x+y)
 
 
-# In[27]:
+# In[33]:
 
 
 reduced_rdd = final_rdd.collect()
 
 
-# In[28]:
+# In[34]:
 
 
 count_dic = {}
 for i in most_popular_categories:
-    count_dic[i['cat_id']] = i['count']
+    count_dic[i['subreddit']] = i['count']
 
 
-# In[29]:
+# In[35]:
 
 
 final_list = []
 
 
-# In[30]:
+# In[44]:
 
 
 for i in reduced_rdd:
-    final_list.append([id_to_cat[i[0]], float(int(i[1]/count_dic[i[0]]*10000))/100])
+    final_list.append([i[0], float(int(i[1]/count_dic[i[0]]*10000))/100])
 
 
-# In[31]:
-
-
-final_list
-
-
-# In[32]:
+# In[45]:
 
 
 final_df = pd.DataFrame (final_list, columns = ['category', 'frequency'])
 
 
-# In[33]:
+# In[46]:
 
 
 final_df.to_csv('frequency_table.csv', sep='\t')
 
 
-# In[34]:
+# In[47]:
 
 
 spark_session.stop()
